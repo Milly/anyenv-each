@@ -1,0 +1,173 @@
+#!/usr/bin/env bash
+#
+# Summary: Run sub-command of all **env.
+#
+# Usage: anyenv each [-v|-q] [-e] [--] <command> [<options>]
+#
+#  -v/--verbose         Shows all output and details to stdout
+#  -q/--quiet           Do not show errors
+#  -e/--stop-on-error   Stop if **env command exits with a non-zero status
+#
+# For detailed information, see: https://github.com/Milly/anyenv-each
+#
+set -eo pipefail
+[[ -n $ANYENV_DEBUG ]] && set -x
+
+# Provide anyenv completions
+if [[ $1 == --complete ]]; then
+  COMPLETE=1
+  shift
+else
+  COMPLETE=
+fi
+
+# Set colored output for TTY
+if [[ -t 1 ]]; then
+  C_CMT="\e[1;30m"
+  C_MSG="\e[0;33m"
+  C_FAIL="\e[0;31m"
+  C_RESET="\e[0m"
+else
+  C_MSG=
+  C_FAIL=
+  C_RESET=
+fi
+
+show_help() {
+  anyenv-help each 2>/dev/null
+  [[ -z $1 ]] || exit "$1"
+}
+
+show_complete() {
+  local filters commands
+  [[ -n $error || -n $help ]] && exit 0
+  if [[ -z $separator && -z $ARGUMENTS && -z $VERBOSE ]]; then
+    [[ -z $QUIET ]] && echo --verbose
+    [[ -z $QUIET ]] && echo --quiet
+    echo --
+  fi
+  if (( ${#ARGUMENTS[*]} <= 1 )); then
+    filters='anyenv_each commands'
+    [[ -z $separator ]] && filters+="| grep -v '^-'"
+    # shellcheck disable=SC2016
+    [[ -n ${ARGUMENTS[0]} ]] && filters+='| grep "^${ARGUMENTS[0]}"'
+    filters+='| sort -u'
+    commands="$(QUIET=1 VERBOSE='' eval "$filters")" || true
+  else
+    commands=${ARGUMENTS[0]}
+  fi
+  if [[ -n $commands ]]; then
+    if [[ "$commands" == "${ARGUMENTS[0]}" ]]; then
+      QUIET=1 VERBOSE='' anyenv_each completions "${ARGUMENTS[@]}" 2>/dev/null
+    else
+      echo "$commands"
+    fi
+  fi
+  exit 0
+}
+
+parse_options() {
+  VERBOSE=
+  QUIET=
+  STOP_ON_ERROR=
+  local index error help separator
+  local -a options
+
+  while (( ${#*} )); do
+    if [[ $1 == -- ]]; then
+      separator=1
+      shift
+      break
+    elif [[ ${1:0:2} == -- ]]; then
+      options[${#options[*]}]=${1:2}
+    elif [[ ${1:0:1} == - ]]; then
+      for (( index = 1; index < ${#1}; ++index )); do
+        options[${#options[*]}]=${1:$index:1}
+      done
+    else
+      break
+    fi
+    shift
+  done
+  ARGUMENTS=("$@")
+
+  for option in "${options[@]}"; do
+    case "$option" in
+    h | help)
+      help=1
+      break
+      ;;
+    v | verbose)
+      VERBOSE=1
+      ;;
+    q | quiet)
+      QUIET=1
+      ;;
+    e | stop-on-error)
+      STOP_ON_ERROR=1
+      ;;
+    *)
+      error="no such option: ${option}"
+      break
+      ;;
+    esac
+  done
+
+  [[ -z $error && -n $VERBOSE && -n $QUIET ]] \
+    && error="can not use --verbose with --quite"
+  [[ -n $COMPLETE ]] && show_complete
+  [[ -n $help ]] && show_help 0
+  if [[ -n $error ]]; then
+    output_error "$error"
+    echo >&2
+    show_help 1 >&2
+  fi
+}
+
+output_env() {
+  local bar cmd
+  bar='========================================================================='
+  cmd="${C_CMT}===[${C_MSG}$1${C_CMT}]"
+  cmd+=${bar:0:$(( 73 - ${#1} ))}
+  cmd+=${C_RESET}
+  echo -e "$cmd"
+}
+
+output_error() {
+  printf "${C_FAIL}%s${C_RESET}\n" "$1" >&2
+}
+
+do_command() {
+  if [[ -n $QUIET ]]; then
+    # do not show errors
+    command "$@" 2>/dev/null
+  elif [[ -n $VERBOSE ]]; then
+    # output all to stdout
+    command "$@" 2>&1
+  else
+    # output all as is
+    command "$@"
+  fi
+}
+
+anyenv_each() {
+  local env exit_code last_error_code=0
+  local -a errors
+  for env in $(anyenv-envs); do
+    [[ -n $VERBOSE ]] && output_env "$env"
+    exit_code=0
+    do_command "$env" "$@" || exit_code=$?
+    [[ -n $VERBOSE ]] && echo
+    if (( exit_code )); then
+      errors+=("${env}[${exit_code}]")
+      last_error_code=$exit_code
+      [[ -n $STOP_ON_ERROR ]] && break
+    fi
+  done
+  [[ -z $QUIET && $last_error_code != 0 ]] \
+    && output_error "FAILED IN: ${errors[*]}"
+  return $last_error_code
+}
+
+parse_options "$@"
+anyenv_each "${ARGUMENTS[@]}"

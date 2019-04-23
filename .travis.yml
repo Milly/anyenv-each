@@ -1,0 +1,30 @@
+language: bash
+
+matrix:
+  fast_finish: true
+
+dist: xenial
+
+addons:
+  apt:
+    packages:
+      - shellcheck
+
+env:
+  global:
+    - PATH="${HOME}/.anyenv/bin:${PATH}"
+    - ANYENV_ROOT="${HOME}/.config/anyenv"
+
+install:
+  - git clone --depth=1 --branch=master https://github.com/anyenv/anyenv ~/.anyenv
+  - mkdir -p "${ANYENV_ROOT}/plugins"
+  - ln -s -t "${ANYENV_ROOT}/plugins" "${PWD}"
+  - anyenv install --force-init
+  - anyenv install rbenv
+  - anyenv install pyenv
+
+script:
+  - shellcheck bin/anyenv-each
+  - anyenv help each
+  - anyenv each -v version
+  - anyenv each -v -- --version
